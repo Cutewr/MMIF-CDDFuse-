@@ -5,35 +5,45 @@ from utils.Evaluator import Evaluator
 import torch
 import torch.nn as nn
 from utils.img_read_save import img_save,image_read_cv2
+from skimage import img_as_ubyte
+
 import warnings
 import logging
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.CRITICAL)
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-ckpt_path=r"models/CDDFuse_IVF.pth"
+# 模型路径
+ckpt_path=r"models/CDDFuse_09-14-09-42.pth"
+
+# 测试不同的数据集
 for dataset_name in ["TNO","RoadScene"]:
     print("\n"*2+"="*80)
     model_name="CDDFuse    "
     print("The test result of "+dataset_name+' :')
-    test_folder=os.path.join('test_img',dataset_name) 
+    test_folder=os.path.join('test_img',dataset_name)
     test_out_folder=os.path.join('test_result',dataset_name)
 
+    # 模型加载与定义
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     Encoder = nn.DataParallel(Restormer_Encoder()).to(device)
     Decoder = nn.DataParallel(Restormer_Decoder()).to(device)
     BaseFuseLayer = nn.DataParallel(BaseFeatureExtraction(dim=64, num_heads=8)).to(device)
     DetailFuseLayer = nn.DataParallel(DetailFeatureExtraction(num_layers=1)).to(device)
 
+    # 使用torch.load加载权重文件中的各个部分：DIDF_Encoder、DIDF_Decoder、BaseFuseLayer和DetailFuseLayer。
     Encoder.load_state_dict(torch.load(ckpt_path)['DIDF_Encoder'])
     Decoder.load_state_dict(torch.load(ckpt_path)['DIDF_Decoder'])
     BaseFuseLayer.load_state_dict(torch.load(ckpt_path)['BaseFuseLayer'])
     DetailFuseLayer.load_state_dict(torch.load(ckpt_path)['DetailFuseLayer'])
+
+    # 将模型设置为评估模式eval()，以确保不计算梯度并使用推理模式
     Encoder.eval()
     Decoder.eval()
     BaseFuseLayer.eval()
     DetailFuseLayer.eval()
 
+    # 处理并融合图像
     with torch.no_grad():
         for img_name in os.listdir(os.path.join(test_folder,"ir")):
 
@@ -50,7 +60,15 @@ for dataset_name in ["TNO","RoadScene"]:
             data_Fuse, _ = Decoder(data_VIS, feature_F_B, feature_F_D)
             data_Fuse=(data_Fuse-torch.min(data_Fuse))/(torch.max(data_Fuse)-torch.min(data_Fuse))
             fi = np.squeeze((data_Fuse * 255).cpu().numpy())
-            img_save(fi, img_name.split(sep='.')[0], test_out_folder)
+            # 归一化到 0-1 范围
+            fi = (fi - np.min(fi)) / (np.max(fi) - np.min(fi))
+
+            # 将浮点型图像转换为 uint8 类型
+            fi_uint8 = img_as_ubyte(fi)
+
+            # 保存图像
+            img_save(fi_uint8, img_name.split(sep='.')[0], test_out_folder)
+            #img_save(fi, img_name.split(sep='.')[0], test_out_folder)
 
 
     eval_folder=test_out_folder  
